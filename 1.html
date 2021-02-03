@@ -1,0 +1,310 @@
+<html>
+
+<head>
+    <title>Interleaving deck.gl with Mapbox Layers</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <script src="https://api.mapbox.com/mapbox-gl-js/v1.12.0/mapbox-gl.js"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v1.12.0/mapbox-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/h3-js@3.7.0/dist/h3-js.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@5/turf.min.js"></script>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+</head>
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+    }
+
+    #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+    }
+
+    input.chk-btn {
+        display: none;
+    }
+
+    input.chk-btn+label {
+        border: 1px solid grey;
+        background: ghoswhite;
+        padding: 5px 8px;
+        cursor: pointer;
+        border-radius: 5px;
+    }
+
+    input.chk-btn:not(:checked)+label:hover {
+        box-shadow: 0px 1px 3px;
+    }
+
+    input.chk-btn+label:active,
+    input.chk-btn:checked+label {
+        box-shadow: 0px 0px 3px inset;
+        background: #eee;
+    }
+</style>
+
+<body style="margin:0">
+
+    <div id="buttons"
+        style="position: absolute;top:20px;left:20px;width:450px;background: white;z-index:1000;padding:20px;">
+        <input type="checkbox" id='c1' class='chk-btn' checked />
+        <label for='c1'>3d hexagons</label>
+        <input type="checkbox" id='c2' class='chk-btn' checked />
+        <label for='c2'>Heatmap</label>
+    </div>
+    <div id="chart "
+        style="position: absolute;top:20px;left:20px;width:450px;height:500px;z-index:1000;padding:20px;pointer-events: none;">
+        <div id="my_dataviz"></div>
+    </div>
+    <div id="map"></div>
+</body>
+
+<script type="text/javascript">
+
+    const hex = document.getElementById("c1")
+    const heatmap = document.getElementById("c2")
+
+    const material = {
+        ambient: 0.64,
+        diffuse: 0.6,
+        shininess: 32,
+        specularColor: [51, 51, 51]
+    };
+
+    const colorRange = [
+        [1, 152, 189],
+        [73, 227, 206],
+        [216, 254, 181],
+        [254, 237, 177],
+        [254, 173, 84],
+        [209, 55, 78]
+    ];
+
+    const { MapboxLayer, HexagonLayer, HeatmapLayer, AmbientLight, PointLight, LightingEffect } = deck;
+    mapboxgl.accessToken = 'pk.eyJ1IjoiYmVuZGVybGlkemUiLCJhIjoiY2pud3c0MnN1MDdraTN4cXBraDR3MHdyaCJ9.OsQLWGIWOutuIXCHgT8coQ';
+    var map = new mapboxgl.Map({
+        container: 'map', // container id
+        style: 'mapbox://styles/mapbox/dark-v9', // style URL
+        center: { lng: -74.017211435, lat: 40.7064570159 },
+        zoom: 12, // starting zoom
+        pitch: 60
+    });
+    map.addControl(new mapboxgl.NavigationControl());
+
+    map.on('load', function () {
+
+        var popup = new mapboxgl.Popup({
+            closeButton: false,
+            closeOnClick: false
+        });
+
+        // fetch("babe_aug+copy.geojson")
+        // .then(i=>i.json())
+        // .then(i=>{
+        //     console.log('i',i);
+        //     const res= i.features.map(i=>{
+        //         return {
+        //             lat: i.geometry.coordinates[1],
+        //             lng: i.geometry.coordinates[0],
+        //             type: i.properties.venue_type,
+        //             impr: +i.properties.impressions
+        //         }
+        //     })
+        //     console.log('res',res);
+        // })
+
+
+        d3.csv('data.csv')
+            .then(data => {
+
+                const avr = {};
+                const uniqueTypes = [...new Set(data.map(i => i.type))]
+                const h3data = data
+                    //.filter(i => i.type === "Bars")
+                    .map(i => {
+
+                        if (!avr.hasOwnProperty(i.type)) {
+                            avr[i.type] = [];
+                        }
+                        avr[i.type].push(+i.impr)
+                        return [+i.lng, +i.lat, +i.impr]
+                    })
+
+                const avrValues = {}
+                Object.keys(avr).map(i => {
+                    avrValues[i] = average(avr[i]).toFixed(2)
+                })
+
+                console.log('avrValues', avrValues);
+
+                d3pie(avrValues)
+
+                console.log('avr', avr);
+                console.log('h3data', h3data);
+                console.log(data)
+                console.log(uniqueTypes)
+
+                const layer = new MapboxLayer({
+                    id: 'hex',
+                    type: HexagonLayer,
+                    data: h3data,
+                    colorRange,
+                    // material,
+                    coverage: 0.95,
+                    elevationRange: [0, 200],
+                    elevationScale: data && data.length ? 50 : 0,
+                    extruded: true,
+                    getPosition: d => d,
+                    pickable: true,
+                    radius: 300,
+                    upperPercentile: 100
+                })
+                map.addLayer(layer);
+
+
+                const heatmap = new MapboxLayer({
+                    id: 'heatmap',
+                    data: h3data,
+                    type: HeatmapLayer,
+                    pickable: false,
+                    getPosition: d => [d[0], d[1]],
+                    getWeight: d => d[2],
+                    radiusPixels: 30,
+                    intensity: 1,
+                    threshold: 0.03
+                })
+                map.addLayer(heatmap);
+            })
+
+    });
+
+    hex.addEventListener("click", function () {
+        if (!this.checked) {
+            map.setLayoutProperty("hex", 'visibility', "none")
+        } else {
+            map.setLayoutProperty("hex", 'visibility', "visible")
+        }
+    })
+    heatmap.addEventListener("click", function () {
+        if (!this.checked) {
+            map.setLayoutProperty("heatmap", 'visibility', "none")
+        } else {
+            map.setLayoutProperty("heatmap", 'visibility', "visible")
+        }
+    })
+
+    // const d = i.filter(i=>i.LATITUDE!=="").map(i=>{
+    //                 return {
+    //                     h3Index: h3.geoToH3(i.LATITUDE,i.LONGITUDE,  11),
+    //                     killed: +i['NUMBER OF PERSONS KILLED'],
+    //                     injured: +i['NUMBER OF PERSONS INJURED']}
+    //             })
+    //             console.log(d)
+
+    //             const t = new Map();
+
+    //             d.forEach(i=>{
+    //                 if(!t.get(i.h3Index)){
+    //                     t.set(i.h3Index, {killed:0,injured:0, count:0})
+    //                 }
+    //                 const f = t.get(i.h3Index);
+    //                 t.set(i.h3Index, {killed: f.killed + i.killed,injured: f.injured + i.injured, count: f.count+1 })
+
+    //             })
+
+    //             console.log(t)
+
+    //             const data = [];
+    //             t.forEach((value, key)=>{
+    //                 data.push({hex:key, killed: value.killed, injured: value.injured, count: value.count})
+    //             })
+
+    //             console.log(data)
+
+    //             const layer = new MapboxLayer({
+    //                 id: 'trips',
+    //                 type: H3HexagonLayer,
+    //                 data: data,
+    //                 pickable: true,
+    //                 wireframe: false,
+    //                 filled: true,
+    //                 extruded: true,
+    //                 elevationScale: 20,
+    //                 getHexagon: d => d.hex,
+    //                 getFillColor: d => [255, (1 - d.count / 500) * 255, 0],
+    //                 getElevation: d => d.killed,
+    //                 onClick: info => console.log(info),
+    //             })
+
+    function average(nums) {
+        return nums.reduce((a, b) => (a + b)) / nums.length;
+    }
+
+    function d3pie(data) {
+        // set the dimensions and margins of the graph
+        var width = 450
+        height = 450
+        margin = 40
+
+        // The radius of the pieplot is half the width or half the height (smallest one). I subtract a bit of margin.
+        var radius = Math.min(width, height) / 2 - margin
+
+        // append the svg object to the div called 'my_dataviz'
+        var svg = d3.select("#my_dataviz")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .append("g")
+            .attr("transform", "translate(" + width / 2 + "," + height / 2 + ")");
+
+
+        // set the color scale
+        var color = d3.scaleOrdinal()
+            .domain(data)
+            .range(d3.schemeSet2);
+
+        // Compute the position of each group on the pie:
+        var pie = d3.pie()
+            .value(function (d) { return d.value; })
+        var data_ready = pie(d3.entries(data))
+        // Now I know that group A goes from 0 degrees to x degrees and so on.
+
+        // shape helper to build arcs:
+        var arcGenerator = d3.arc()
+            .innerRadius(0)
+            .outerRadius(radius)
+
+        // Build the pie chart: Basically, each part of the pie is a path that we build using the arc function.
+        svg
+            .selectAll('mySlices')
+            .data(data_ready)
+            .enter()
+            .append('path')
+            .attr('d', arcGenerator)
+            .attr('fill', function (d) { return (color(d.data.key)) })
+            .attr("stroke", "black")
+            .style("stroke-width", "2px")
+            .style("opacity", 0.95)
+
+        // Now add the annotation. Use the centroid method to get the best coordinates
+        svg
+            .selectAll('mySlices')
+            .data(data_ready)
+            .enter()
+            .append('text')
+            .text(function (d) {
+                console.log('d', d);
+                return d.data.key + ":" + d.data.value
+            })
+            .attr("transform", function (d) { return "translate(" + arcGenerator.centroid(d) + ")"; })
+            .style("text-anchor", "middle")
+            .style("font-size", 12)
+    }
+
+</script>
+
+</html>
